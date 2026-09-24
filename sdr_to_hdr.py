@@ -12,6 +12,8 @@ Open-source algorithm used here:
 Usage:
   python sdr_to_hdr.py input.png [--peak-nits 1000] [--sdr-white 203] [--quality 92]
 """
+
+
 from __future__ import annotations
 
 import argparse
@@ -159,6 +161,7 @@ def build_ultra_hdr(
     sdr_white: float,
     base_quality: int = 92,
     gainmap_quality: int = 85,
+    save_gain_map: bool = True
 ) -> bytes:
     # Shared hdrgm XMP (identical in primary and gain map, matches real samples)
     hdr_capacity = math.log2(peak_nits / sdr_white)
@@ -173,6 +176,11 @@ def build_ultra_hdr(
     # 2. Gain map JPEG (grayscale uint8) with FULL hdrgm XMP (not just Version)
     gain_range = gain_max - gain_min or 1.0
     gain_u8 = np.clip((gain_log2 - gain_min) / gain_range * 255 + 0.5, 0, 255).astype(np.uint8)
+
+    if save_gain_map:
+        gain_pil = Image.fromarray(gain_u8)
+        gain_pil.save('gain_map.jpg', 'JPEG')
+
     gm_buf = io.BytesIO()
     Image.fromarray(gain_u8, 'L').save(gm_buf, format='JPEG', quality=gainmap_quality)
     gm_raw = gm_buf.getvalue()

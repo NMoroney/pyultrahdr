@@ -2,9 +2,9 @@
 
 **Turn any ordinary SDR image into a real Ultra HDR JPEG — in pure Python, no `libultrahdr` required.**
 
-| Before — plain SDR | After — Ultra HDR JPEG |
-|---|---|
-| ![SDR](docs/demo_sdr.jpg) | ![Ultra HDR](docs/demo_ultrahdr.jpg) |
+| Before — plain SDR | Gain Map | After — Ultra HDR JPEG |
+|---|---|---|
+| <img src="docs/demo_sdr.jpg" width=250px> | <img src="docs/gain_map.jpg" width=250px> | <img src="docs/demo_ultrahdr.jpg" width=250px> |
 
 > **Open this README in Chrome on an HDR display** (Windows 11 24H2 / macOS Sonoma / Android 14+ / iOS 17.4+) to see the right image light up. On an SDR display the two look identical — that's the point: Ultra HDR degrades gracefully everywhere and pops wherever HDR is available.
 
