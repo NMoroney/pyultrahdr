@@ -11,9 +11,8 @@ Open-source algorithm used here:
 
 Usage:
   python sdr_to_hdr.py input.png [--peak-nits 1000] [--sdr-white 203] [--quality 92]
+                                 [--save-gainmap]
 """
-
-
 from __future__ import annotations
 
 import argparse
@@ -152,6 +151,20 @@ def _mpf_app2(primary_size: int, gainmap_size: int, gainmap_offset: int) -> byte
 
 # ── Ultra HDR assembly ──────────────────────────────────────────────────────
 
+def encode_gain_map(
+    gain_log2: np.ndarray,
+    gain_min: float,
+    gain_max: float,
+    quality: int = 85,
+) -> bytes:
+    """Quantise log2 gain to 8-bit grayscale and encode as a plain JPEG."""
+    gain_range = gain_max - gain_min or 1.0
+    gain_u8 = np.clip((gain_log2 - gain_min) / gain_range * 255 + 0.5, 0, 255).astype(np.uint8)
+    buf = io.BytesIO()
+    Image.fromarray(gain_u8, 'L').save(buf, format='JPEG', quality=quality)
+    return buf.getvalue()
+
+
 def build_ultra_hdr(
     sdr_uint8: np.ndarray,
     gain_log2: np.ndarray,
@@ -161,7 +174,6 @@ def build_ultra_hdr(
     sdr_white: float,
     base_quality: int = 92,
     gainmap_quality: int = 85,
-    save_gain_map: bool = True
 ) -> bytes:
     # Shared hdrgm XMP (identical in primary and gain map, matches real samples)
     hdr_capacity = math.log2(peak_nits / sdr_white)
@@ -174,16 +186,7 @@ def build_ultra_hdr(
     base_jpeg = buf.getvalue()
 
     # 2. Gain map JPEG (grayscale uint8) with FULL hdrgm XMP (not just Version)
-    gain_range = gain_max - gain_min or 1.0
-    gain_u8 = np.clip((gain_log2 - gain_min) / gain_range * 255 + 0.5, 0, 255).astype(np.uint8)
-
-    if save_gain_map:
-        gain_pil = Image.fromarray(gain_u8)
-        gain_pil.save('gain_map.jpg', 'JPEG')
-
-    gm_buf = io.BytesIO()
-    Image.fromarray(gain_u8, 'L').save(gm_buf, format='JPEG', quality=gainmap_quality)
-    gm_raw = gm_buf.getvalue()
+    gm_raw = encode_gain_map(gain_log2, gain_min, gain_max, gainmap_quality)
     gainmap_jpeg = gm_raw[:2] + xmp_app1 + gm_raw[2:]  # inject same XMP after SOI
 
     # 4. Compute sizes and offsets, build MPF APP2
@@ -212,6 +215,8 @@ def main() -> None:
     ap.add_argument('--sdr-white',       type=float, default=203.0)
     ap.add_argument('--quality',         type=int,   default=92)
     ap.add_argument('--gainmap-quality', type=int,   default=85)
+    ap.add_argument('--save-gainmap',    action='store_true',
+                    help='also write the gain map as a standalone grayscale JPEG')
     args = ap.parse_args()
 
     sdr_uint8 = np.array(Image.open(args.input).convert('RGB'), dtype=np.uint8)
@@ -232,6 +237,10 @@ def main() -> None:
     out.write_bytes(ultra_hdr)
     print(f'wrote  {out}')
     print(f'size   {len(ultra_hdr) // 1024} KB')
+    if args.save_gainmap:
+        gm_out = args.input.with_name(args.input.stem + '_gainmap.jpg')
+        gm_out.write_bytes(encode_gain_map(gain_log2, gain_min, gain_max, args.gainmap_quality))
+        print(f'wrote  {gm_out}')
     print(f'gain   min={gain_min:.3f}  max={gain_max:.3f}  (log2 stops)')
     print(f'boost  peak ~{2**gain_max * args.sdr_white:.0f} nits  ({2**gain_max:.1f}x SDR white)')
 
