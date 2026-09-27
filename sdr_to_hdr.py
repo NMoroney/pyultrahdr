@@ -205,6 +205,7 @@ def build_ultra_hdr(
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class UltraHDRConfig:
     input: Path
@@ -213,6 +214,7 @@ class UltraHDRConfig:
     quality: int
     gainmap_quality: int
     save_gainmap: bool
+
 
 def parse_args() -> UltraHDRConfig:
     ap = argparse.ArgumentParser(description='SDR image → Ultra HDR JPEG')
@@ -226,6 +228,7 @@ def parse_args() -> UltraHDRConfig:
     args = ap.parse_args()
     args_dict = {k.replace('-', '_'): v for k, v in vars(args).items()}
     return UltraHDRConfig(**args_dict)
+
 
 def main() -> None:
     cfg = parse_args()
