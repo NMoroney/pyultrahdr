@@ -20,6 +20,7 @@ import io
 import math
 import struct
 from pathlib import Path
+from dataclasses import dataclass
 
 import numpy as np
 from PIL import Image
@@ -44,8 +45,7 @@ BT709_TO_BT2020 = np.array([
 
 def inverse_tone_map(
     rgb_lin: np.ndarray,        # H×W×3, linear SDR [0,1]
-    sdr_white: float = 203.0,   # nits at SDR ref white (BT.2408)
-    peak_nits: float = 1000.0,
+    cfg: UltraHDRConfig,
     shadow_boost: float = 1.3,  # minimum boost applied to darks (so shadows also "pop" in HDR)
     hi_gamma: float = 1.0,      # curve exponent; <1 boosts mids more, >1 reserves boost for highlights
 ) -> np.ndarray:
@@ -57,9 +57,9 @@ def inverse_tone_map(
     """
     w = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
     L = np.clip((rgb_lin * w).sum(-1, keepdims=True), 1e-6, 1.0)
-    peak_boost = peak_nits / sdr_white
+    peak_boost = cfg.peak_nits / cfg.sdr_white
     boost = shadow_boost + (peak_boost - shadow_boost) * L ** hi_gamma
-    return rgb_lin * sdr_white * boost  # H×W×3, nits
+    return rgb_lin * cfg.sdr_white * boost  # H×W×3, nits
 
 
 # ── Gain map ────────────────────────────────────────────────────────────────
@@ -161,7 +161,7 @@ def encode_gain_map(
     gain_range = gain_max - gain_min or 1.0
     gain_u8 = np.clip((gain_log2 - gain_min) / gain_range * 255 + 0.5, 0, 255).astype(np.uint8)
     buf = io.BytesIO()
-    Image.fromarray(gain_u8, 'L').save(buf, format='JPEG', quality=quality)
+    Image.fromarray(gain_u8).save(buf, format='JPEG', quality=quality)
     return buf.getvalue()
 
 
@@ -170,23 +170,20 @@ def build_ultra_hdr(
     gain_log2: np.ndarray,
     gain_min: float,
     gain_max: float,
-    peak_nits: float,
-    sdr_white: float,
-    base_quality: int = 92,
-    gainmap_quality: int = 85,
+    cfg: UltraHDRConfig
 ) -> bytes:
     # Shared hdrgm XMP (identical in primary and gain map, matches real samples)
-    hdr_capacity = math.log2(peak_nits / sdr_white)
+    hdr_capacity = math.log2(cfg.peak_nits / cfg.sdr_white)
     xmp_app1 = _xmp_hdrgm(gain_min, gain_max, hdr_capacity)
 
     # 1. Base SDR JPEG (plain, no extra markers)
     buf = io.BytesIO()
-    Image.fromarray(sdr_uint8, 'RGB').save(buf, format='JPEG',
-                                           quality=base_quality, subsampling=0)
+    Image.fromarray(sdr_uint8).save(buf, format='JPEG',
+                                         quality=cfg.quality, subsampling=0)
     base_jpeg = buf.getvalue()
 
     # 2. Gain map JPEG (grayscale uint8) with FULL hdrgm XMP (not just Version)
-    gm_raw = encode_gain_map(gain_log2, gain_min, gain_max, gainmap_quality)
+    gm_raw = encode_gain_map(gain_log2, gain_min, gain_max, cfg.gainmap_quality)
     gainmap_jpeg = gm_raw[:2] + xmp_app1 + gm_raw[2:]  # inject same XMP after SOI
 
     # 4. Compute sizes and offsets, build MPF APP2
@@ -208,7 +205,16 @@ def build_ultra_hdr(
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
 
-def main() -> None:
+@dataclass
+class UltraHDRConfig:
+    input: Path
+    peak_nits: float
+    sdr_white: float
+    quality: int
+    gainmap_quality: int
+    save_gainmap: bool
+
+def parse_args() -> UltraHDRConfig:
     ap = argparse.ArgumentParser(description='SDR image → Ultra HDR JPEG')
     ap.add_argument('input', type=Path)
     ap.add_argument('--peak-nits',       type=float, default=1000.0)
@@ -218,31 +224,35 @@ def main() -> None:
     ap.add_argument('--save-gainmap',    action='store_true',
                     help='also write the gain map as a standalone grayscale JPEG')
     args = ap.parse_args()
+    args_dict = {k.replace('-', '_'): v for k, v in vars(args).items()}
+    return UltraHDRConfig(**args_dict)
 
-    sdr_uint8 = np.array(Image.open(args.input).convert('RGB'), dtype=np.uint8)
+def main() -> None:
+    cfg = parse_args()
+
+    sdr_uint8 = np.array(Image.open(cfg.input).convert('RGB'), dtype=np.uint8)
     sdr_lin   = srgb_to_linear(sdr_uint8.astype(np.float32) / 255.0)
 
-    hdr_nits   = inverse_tone_map(sdr_lin, args.sdr_white, args.peak_nits)
-    hdr_bt2020 = np.clip(hdr_nits @ BT709_TO_BT2020.T, 0.0, args.peak_nits)
+    hdr_nits   = inverse_tone_map(sdr_lin, cfg)
+    hdr_bt2020 = np.clip(hdr_nits @ BT709_TO_BT2020.T, 0.0, cfg.peak_nits)
 
-    gain_log2, gain_min, gain_max = compute_gain_map(sdr_lin, hdr_bt2020, args.sdr_white)
+    gain_log2, gain_min, gain_max = compute_gain_map(sdr_lin, hdr_bt2020, cfg.sdr_white)
 
     ultra_hdr = build_ultra_hdr(
         sdr_uint8, gain_log2, gain_min, gain_max,
-        args.peak_nits, args.sdr_white,
-        args.quality, args.gainmap_quality,
+        cfg
     )
 
-    out = args.input.with_name(args.input.stem + '_ultrahdr.jpg')
+    out = cfg.input.with_name(cfg.input.stem + '_ultrahdr.jpg')
     out.write_bytes(ultra_hdr)
     print(f'wrote  {out}')
     print(f'size   {len(ultra_hdr) // 1024} KB')
-    if args.save_gainmap:
-        gm_out = args.input.with_name(args.input.stem + '_gainmap.jpg')
-        gm_out.write_bytes(encode_gain_map(gain_log2, gain_min, gain_max, args.gainmap_quality))
+    if cfg.save_gainmap:
+        gm_out = cfg.input.with_name(cfg.input.stem + '_gainmap.jpg')
+        gm_out.write_bytes(encode_gain_map(gain_log2, gain_min, gain_max, cfg.gainmap_quality))
         print(f'wrote  {gm_out}')
     print(f'gain   min={gain_min:.3f}  max={gain_max:.3f}  (log2 stops)')
-    print(f'boost  peak ~{2**gain_max * args.sdr_white:.0f} nits  ({2**gain_max:.1f}x SDR white)')
+    print(f'boost  peak ~{2**gain_max * cfg.sdr_white:.0f} nits  ({2**gain_max:.1f}x SDR white)')
 
 
 if __name__ == '__main__':
