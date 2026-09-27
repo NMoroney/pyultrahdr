@@ -2,9 +2,9 @@
 
 **Turn any ordinary SDR image into a real Ultra HDR JPEG — in pure Python, no `libultrahdr` required.**
 
-| Before — plain SDR | After — Ultra HDR JPEG |
-|---|---|
-| ![SDR](docs/demo_sdr.jpg) | ![Ultra HDR](docs/demo_ultrahdr.jpg) |
+| Before — plain SDR | Gain map | After — Ultra HDR JPEG |
+|---|---|---|
+| ![SDR](docs/demo_sdr.jpg) | ![Gain map](docs/demo_gainmap.jpg) | ![Ultra HDR](docs/demo_ultrahdr.jpg) |
 
 > **Open this README in Chrome on an HDR display** (Windows 11 24H2 / macOS Sonoma / Android 14+ / iOS 17.4+) to see the right image light up. On an SDR display the two look identical — that's the point: Ultra HDR degrades gracefully everywhere and pops wherever HDR is available.
 
@@ -58,6 +58,9 @@ Flags:
 | `--sdr-white` | `203` | SDR reference white in nits (BT.2408) |
 | `--quality` | `92` | Base JPEG quality (1-100) |
 | `--gainmap-quality` | `85` | Gain map JPEG quality (1-100) |
+| `--save-gainmap` | off | Also write the gain map as a standalone grayscale JPEG (`input_gainmap.jpg`) |
+
+The saved gain map is the same 8-bit image that gets embedded: black = no boost, white = `GainMapMax` stops of boost. It's handy for inspecting or tuning the inverse tone mapping, or for feeding other gain map tools.
 
 Batch convert a folder:
 
